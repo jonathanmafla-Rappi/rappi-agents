@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Bridge HT — Stores vs Target</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:       #F7F6F3;
+    --surface:  #FFFFFF;
+    --surface2: #F0EEE9;
+    --border:   #E2E0D8;
+    --text:     #1A1917;
+    --muted:    #73726C;
+    --blue:     #185FA5;
+    --blue-l:   #B5D4F4;
+    --green:    #3B6D11;
+    --green-l:  #D4EDBA;
+    --red:      #A32D2D;
+    --red-l:    #F7C1C1;
+    --radius:   8px;
+    --shadow:   0 1px 3px rgba(0,0,0,.08);
+  }
+  body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.5; }
+  .wrapper { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+
+  /* Header */
+  .header { margin-bottom: 20px; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header .meta { font-size: 11px; color: var(--muted); margin-top: 5px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; background: var(--blue-l); color: var(--blue); }
+  .note  { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+  /* KPI */
+  .kpi-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 20px; }
+  @media(max-width:600px){ .kpi-row { grid-template-columns: 1fr 1fr; } }
+  .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); }
+  .kpi-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .kpi-value { font-size: 22px; font-weight: 600; }
+  .kpi-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+
+  /* Chart */
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; box-shadow: var(--shadow); }
+  .chart-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
+  .leg-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .leg-sq { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  #wf-svg { width: 100%; display: block; }
+
+  /* Tooltip */
+  #tooltip { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; font-size: 12px; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 100; min-width: 170px; line-height: 1.7; box-shadow: var(--shadow); }
+
+  /* Tabla */
+  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; box-shadow: var(--shadow); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { padding: 6px 10px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); text-align: left; }
+  th.r, td.r { text-align: right; }
+  td { padding: 5px 10px; border-bottom: .5px solid var(--border); }
+  tr:last-child td { border-bottom: none; font-weight: 600; border-top: 1px solid var(--border); }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 500; }
+  .pill-pos { background: var(--green-l); color: var(--green); }
+  .pill-neg { background: var(--red-l);   color: var(--red); }
+  .pill-zer { background: var(--surface2); color: var(--muted); }
+
+  /* Footer */
+  .footer { font-size: 11px; color: var(--muted); padding: 12px 0; border-top: .5px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- HEADER -->
+  <div class="header">
+    <h1>Bridge HT — Stores vs Target <span class="badge" id="badge-modalidad">QTD</span></h1>
+    <div class="meta">
+      <span id="meta-semanas">Semanas: cargando...</span>
+      <span id="meta-generado">Generado: —</span>
+    </div>
+    <div class="note" id="meta-note">Actual incluye tiendas de hunters salidos del equipo (HC=0)</div>
+  </div>
+
+  <!-- KPI CARDS -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-label">Target total</div>
+      <div class="kpi-value" id="kpi-target">—</div>
+      <div class="kpi-sub">stores</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Real total</div>
+      <div class="kpi-value" id="kpi-real">—</div>
+      <div class="kpi-sub">stores (incl. HC=0)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Desvío</div>
+      <div class="kpi-value" id="kpi-desvio">—</div>
+      <div class="kpi-sub" id="kpi-desvio-pct">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Semanas cubiertas</div>
+      <div class="kpi-value" id="kpi-semanas">—</div>
+      <div class="kpi-sub" id="kpi-modalidad-label">—</div>
+    </div>
+  </div>
+
+  <!-- WATERFALL -->
+  <div class="chart-card">
+    <div class="chart-title">Descomposición del gap</div>
+    <div class="legend">
+      <div class="leg-item"><div class="leg-sq" style="background:#185FA5"></div>Base / Total</div>
+      <div class="leg-item"><div class="leg-sq" style="background:#3B6D11"></div>Efecto positivo</div>
+      <div class="leg-item"><div class="leg-sq" style="background:#A32D2D"></div>Efecto negativo</div>
+    </div>
+    <svg id="wf-svg" aria-label="Gráfica de cascada bridge HT"></svg>
+  </div>
+
+  <!-- TABLA RESUMEN -->
+  <div class="table-card">
+    <div class="chart-title">Resumen de efectos</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Efecto</th>
+          <th class="r">Stores</th>
+          <th class="r">% sobre target</th>
+        </tr>
+      </thead>
+      <tbody id="tabla-efectos"></tbody>
+    </table>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer" id="footer-text">Fuente: Snowflake · HT_FUNNEL_GOLD · TG_HT_2026_GOLD</div>
+
+</div>
+<div id="tooltip"></div>
+
+<!-- ══════════════════════════════════════════════════
+     DATOS DEL BRIDGE — reemplazar con valores reales
+     ══════════════════════════════════════════════════ -->
+<script>
+const BRIDGE_DATA = {
+  modalidad:           "QTD",
+  semanas:             ["2026-03-30","2026-04-06","2026-04-13","2026-04-20"],
+  target_oficial:      4036,
+  target_reconstruido: 3930,
+  real_total:          3561,
+  desvio:              -475,
+  desvio_pct:          -11.8,
+  efectos: [
+    { label: "Productividad", delta: -518, sub_pos: "Prod/día sobre target",     sub_neg: "Stores/día bajo target" },
+    { label: "Madurez",       delta:   -7, sub_pos: "Mix más senior esperado",   sub_neg: "Mix más junior esperado" },
+    { label: "Headcount",     delta:  135, sub_pos: "Más personas planificadas", sub_neg: "Menos personas planificadas" },
+    { label: "Ausencias",     delta:  -86, sub_pos: "Más días trabajados",       sub_neg: "Días no trabajados" }
+  ]
+};
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     LÓGICA DE RENDER — no modificar
+     ══════════════════════════════════════════════════ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>
+(function(){
+  const D = BRIDGE_DATA;
+
+  // Verificación de cierre
+  const sumDelta = D.efectos.reduce((s,e)=>s+e.delta,0);
+  const esperado = D.real_total - D.target_reconstruido;
+  if (Math.abs(sumDelta - esperado) > 1) {
+    console.warn('[Bridge HT] CIERRE INCORRECTO: suma='+sumDelta+' esperado='+esperado);
+  }
+
+  const fmt     = n => Math.round(n).toLocaleString('es');
+  const fmtSign = n => (n>=0?'+':'')+fmt(n);
+  const fmtPct  = n => (n>=0?'+':'')+n.toFixed(1)+'%';
+  const today   = new Date().toLocaleDateString('es',{day:'2-digit',month:'short',year:'numeric'});
+
+  // KPI
+  document.getElementById('badge-modalidad').textContent      = D.modalidad;
+  document.getElementById('meta-semanas').textContent         = 'Semanas: '+D.semanas.join(' · ');
+  document.getElementById('meta-generado').textContent        = 'Generado: '+today;
+  document.getElementById('kpi-target').textContent           = fmt(D.target_oficial);
+  document.getElementById('kpi-real').textContent             = fmt(D.real_total);
+  const kpiD = document.getElementById('kpi-desvio');
+  kpiD.textContent  = fmtSign(D.desvio);
+  kpiD.className    = 'kpi-value '+(D.desvio>=0?'pos':'neg');
+  document.getElementById('kpi-desvio-pct').textContent       = fmtPct(D.desvio_pct)+' vs target';
+  document.getElementById('kpi-semanas').textContent          = D.semanas.length;
+  document.getElementById('kpi-modalidad-label').textContent  = D.modalidad==='LW'?'Last Week':'Quarter to Date';
+
+  // Footer
+  document.getElementById('footer-text').innerHTML =
+    'Fuente: Snowflake &middot; HT_FUNNEL_GOLD &middot; TG_HT_2026_GOLD &nbsp;|&nbsp; '+
+    'Actual incluye HC=0 &nbsp;|&nbsp; Semanas: '+D.semanas.join(', ')+' &nbsp;|&nbsp; Modalidad: '+D.modalidad;
+
+  // Tabla
+  const tbody = document.getElementById('tabla-efectos');
+  D.efectos.forEach(e => {
+    const pct = D.target_oficial!==0?(e.delta/D.target_oficial*100):0;
+    const cls = e.delta>0?'pill-pos':e.delta<0?'pill-neg':'pill-zer';
+    tbody.innerHTML += `<tr>
+      <td>${e.label}</td>
+      <td class="r"><span class="pill ${cls}">${fmtSign(e.delta)}</span></td>
+      <td class="r">${e.delta===0?'—':fmtPct(pct)}</td>
+    </tr>`;
+  });
+  const totalCls = D.desvio>0?'pill-pos':D.desvio<0?'pill-neg':'pill-zer';
+  tbody.innerHTML += `<tr>
+    <td>Desvío total</td>
+    <td class="r"><span class="pill ${totalCls}">${fmtSign(D.desvio)}</span></td>
+    <td class="r">${fmtPct(D.desvio_pct)}</td>
+  </tr>`;
+
+  // Waterfall D3 SVG
+  const bars = [
+    { label:'Target', delta:D.target_reconstruido, type:'base', sub:'' },
+    ...D.efectos.map(e=>({
+      label: e.label,
+      delta: e.delta,
+      type:  e.delta>0?'pos':e.delta<0?'neg':'zero',
+      sub:   e.delta>=0?e.sub_pos:e.sub_neg
+    })),
+    { label:'Actual', delta:D.real_total, type:'total', sub:'Incluye hunters salidos (HC=0)' }
+  ];
+
+  let cursor = 0;
+  bars.forEach(b=>{
+    if(b.type==='base')       { b.s=0;      b.e=D.target_reconstruido; cursor=D.target_reconstruido; }
+    else if(b.type==='total') { b.s=0;      b.e=D.real_total; }
+    else                      { b.s=cursor; b.e=cursor+b.delta; cursor=b.e; }
+  });
+
+  const COL  = { base:'#185FA5', total:'#185FA5', pos:'#3B6D11', neg:'#A32D2D', zero:'#B4B2A9' };
+  const LITE = { base:'#B5D4F4', total:'#B5D4F4', pos:'#A8D47A', neg:'#F7C1C1', zero:'#D3D1C7' };
+
+  const svgEl = document.getElementById('wf-svg');
+  const W = svgEl.parentElement.clientWidth || 800;
+  const H = 420;
+  svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svgEl.setAttribute('height', H);
+
+  const mg = { top:48, right:58, bottom:80, left:68 };
+  const iW = W-mg.left-mg.right;
+  const iH = H-mg.top-mg.bottom;
+
+  const svg = d3.select('#wf-svg');
+  const g   = svg.append('g').attr('transform',`translate(${mg.left},${mg.top})`);
+
+  const allV = bars.flatMap(b=>[b.s,b.e]);
+  const minV = Math.min(...allV), maxV = Math.max(...allV);
+  const pad  = (maxV-minV)*0.16;
+  const yS   = d3.scaleLinear().domain([Math.max(0,minV-pad*0.2), maxV+pad]).range([iH,0]);
+  const xS   = d3.scaleBand().domain(bars.map(b=>b.label)).range([0,iW]).paddingInner(0.35).paddingOuter(0.10);
+
+  const tp = '#1A1917', ts = '#73726C', gc = 'rgba(0,0,0,0.06)';
+
+  // Grid
+  yS.ticks(6).forEach(t=>{
+    g.append('line').attr('x1',0).attr('x2',iW).attr('y1',yS(t)).attr('y2',yS(t))
+     .attr('stroke',gc).attr('stroke-width',0.5);
+  });
+
+  // Conectores
+  bars.forEach((b,i)=>{
+    if(i===bars.length-1)return;
+    const nx=bars[i+1]; if(nx.type==='total')return;
+    g.append('line')
+     .attr('x1',xS(b.label)+xS.bandwidth()).attr('x2',xS(nx.label))
+     .attr('y1',yS(b.e)).attr('y2',yS(b.e))
+     .attr('stroke',ts).attr('stroke-width',0.8).attr('stroke-dasharray','3,3');
+  });
+
+  // Barras
+  const bG = g.selectAll('.bar').data(bars).join('g').attr('class','bar').style('cursor','pointer');
+
+  bG.append('rect')
+    .attr('x',d=>xS(d.label)).attr('width',xS.bandwidth())
+    .attr('y',d=>yS(Math.max(d.s,d.e))).attr('height',d=>Math.max(2,Math.abs(yS(d.s)-yS(d.e))))
+    .attr('fill',d=>COL[d.type]).attr('rx',3);
+
+  // Labels valor
+  bG.append('text')
+    .attr('x',d=>xS(d.label)+xS.bandwidth()/2)
+    .attr('y',d=>yS(Math.max(d.s,d.e))-8)
+    .attr('text-anchor','middle').attr('font-size','11.5').attr('font-weight','500')
+    .attr('fill',d=>COL[d.type])
+    .text(d=>{
+      if(d.type==='base'||d.type==='total') return fmt(d.e);
+      const s=d.delta>=0?'+':'', p=((d.delta/D.target_oficial)*100).toFixed(1);
+      return `${s}${fmt(d.delta)}  (${s}${p}%)`;
+    });
+
+  // Labels X nombre
+  bG.append('text')
+    .attr('x',d=>xS(d.label)+xS.bandwidth()/2).attr('y',iH+20)
+    .attr('text-anchor','middle').attr('font-size','12.5')
+    .attr('fill',d=>(d.type==='base'||d.type==='total')?tp:ts)
+    .attr('font-weight',d=>(d.type==='base'||d.type==='total')?'500':'400')
+    .text(d=>d.label);
+
+  // Subtítulos
+  bG.append('text')
+    .attr('x',d=>xS(d.label)+xS.bandwidth()/2).attr('y',iH+36)
+    .attr('text-anchor','middle').attr('font-size','9.5').attr('fill',ts)
+    .text(d=>d.sub||'');
+
+  // Eje Y
+  g.append('g')
+   .call(d3.axisLeft(yS).ticks(6).tickFormat(d=>fmt(d)))
+   .call(a=>a.select('.domain').remove())
+   .call(a=>a.selectAll('.tick line').remove())
+   .call(a=>a.selectAll('.tick text').attr('font-size','11').attr('fill',ts));
+
+  // Flecha gap
+  svg.append('defs').append('marker').attr('id','arr-ht')
+   .attr('markerWidth',6).attr('markerHeight',6).attr('refX',3).attr('refY',3).attr('orient','auto')
+   .append('path').attr('d','M0,0 L0,6 L6,3 Z').attr('fill','#E24B4A');
+  const xa=iW+mg.left+20, ya=yS(D.target_reconstruido)+mg.top, yb=yS(D.real_total)+mg.top;
+  svg.append('line').attr('x1',xa).attr('x2',xa).attr('y1',ya).attr('y2',yb+8)
+   .attr('stroke','#E24B4A').attr('stroke-width',1.5).attr('marker-end','url(#arr-ht)');
+  svg.append('line').attr('x1',xa-4).attr('x2',xa+4).attr('y1',ya).attr('y2',ya)
+   .attr('stroke','#E24B4A').attr('stroke-width',1.5);
+  svg.append('text').attr('x',xa+7).attr('y',(ya+yb)/2+4)
+   .attr('font-size','11').attr('fill','#E24B4A').attr('font-weight','500')
+   .text(fmtSign(D.desvio));
+
+  // Tooltip hover
+  const tt = document.getElementById('tooltip');
+  bG.on('mousemove', function(event, d){
+    const isBig = d.type==='base'||d.type==='total';
+    const s = d.delta>=0?'+':'';
+    const pct = D.target_oficial!==0?(d.delta/D.target_oficial*100).toFixed(1):'0.0';
+    let html = '<strong>'+d.label+'</strong><br>';
+    if(isBig){
+      html += 'Stores: <strong>'+fmt(d.e)+'</strong>';
+    } else {
+      html += 'Efecto: <strong>'+s+fmt(d.delta)+' stores</strong><br>';
+      html += '% sobre target: <strong>'+s+pct+'%</strong><br>';
+      html += 'Acumulado: <strong>'+fmt(d.e)+'</strong>';
+    }
+    tt.innerHTML = html;
+    tt.style.opacity='1';
+    tt.style.left=Math.min(event.clientX+14,window.innerWidth-200)+'px';
+    tt.style.top=Math.max(event.clientY-30,0)+'px';
+  }).on('mouseleave',()=>{ tt.style.opacity='0'; });
+
+})();
+</script>
+</body>
+</html>
