@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Deep Dive Productividad HT — LW {{WEEK}}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+:root{--bg:#F7F6F3;--card:#FFFFFF;--ink:#171717;--muted:#6D6A63;--line:#E2E0D8;--blue:#185FA5;--red:#A32D2D;--green:#1D9E75;--gray:#8A8780}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink)}
+.wrapper{max-width:1180px;margin:0 auto;padding:28px 20px 36px}
+.header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}
+h1{font-size:26px;line-height:1.1;margin:0 0 6px;font-weight:750}
+.subtitle{color:var(--muted);font-size:13px}.badge{display:inline-block;background:#DDF3EA;color:var(--green);border:1px solid #BFE7D6;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:650}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:18px 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.kpi{padding:16px}.kpi .label{color:var(--muted);font-size:12px}.kpi .value{font-size:26px;font-weight:760;margin-top:4px}.kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.wide{grid-column:1/-1}.chart-card{padding:16px 18px 14px}
+.chart-title{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}.chart-title h2{font-size:15px;margin:0;text-transform:uppercase;letter-spacing:.04em;color:#383630}.chart-title span{font-size:12px;color:var(--muted)}
+svg{width:100%;height:auto;display:block}.axis text{font-size:11px;fill:var(--muted)}.axis path,.axis line{stroke:#D7D4CC}.gridline line{stroke:#ECE9E2}
+.note{font-size:13px;color:var(--muted);line-height:1.45;margin:8px 0 0}
+.insights{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}.insight{padding:14px}.insight b{display:block;margin-bottom:4px;font-size:14px}.insight p{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 9px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-weight:650}.r{text-align:right}.neg{color:var(--red);font-weight:650}.pos{color:var(--green);font-weight:650}.footer{margin-top:18px;color:var(--muted);font-size:11px;border-top:1px solid var(--line);padding-top:12px}
+@media(max-width:950px){.kpis{grid-template-columns:repeat(2,1fr)}.grid,.insights{grid-template-columns:1fr}.header{display:block}}
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <div class="header">
+    <div>
+      <h1>Deep Dive Ejecutivo — Gap de Productividad Hunting</h1>
+      <div class="subtitle">Semana {{WEEK}} · {{QUARTER}} · Fuente: Snowflake · HT_FUNNEL_GOLD + TG_HT_2026_GOLD</div>
+    </div>
+    <div class="badge">LW · Hunting</div>
+  </div>
+
+  <div class="kpis" id="kpis-section"></div>
+  <div class="insights" id="insights-section"></div>
+
+  <div class="grid">
+    <div class="card chart-card">
+      <div class="chart-title"><h2>Gap por aging</h2><span>stores equivalentes</span></div>
+      <div id="chart-aging"></div>
+      <p class="note" id="note-aging"></p>
+    </div>
+    <div class="card chart-card">
+      <div class="chart-title"><h2>Pareto por país</h2><span>impacto productividad</span></div>
+      <div id="chart-country"></div>
+      <p class="note" id="note-country"></p>
+    </div>
+
+    <div class="card chart-card wide">
+      <div class="chart-title"><h2>Top celdas país + aging</h2><span>positivos y arrastres</span></div>
+      <div id="chart-country-aging"></div>
+    </div>
+
+    <div class="card chart-card wide">
+      <div class="chart-title"><h2>Buckets de performance hunter</h2><span>0 stores vs bajo target vs sobre target</span></div>
+      <div id="chart-buckets"></div>
+      <p class="note" id="note-buckets"></p>
+    </div>
+
+    <div class="card chart-card wide">
+      <div class="chart-title"><h2>Tabla ejecutiva — drivers por país + aging</h2><span>ordenado por impacto</span></div>
+      <table id="drivers-table">
+        <thead><tr><th>País</th><th>Aging</th><th class="r">Hunters</th><th class="r">Días</th><th class="r">Stores</th><th class="r">Prod Real</th><th class="r">Target</th><th class="r">Impacto</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">Fuente: Snowflake · Semana {{WEEK}} · Cálculo: impacto productividad = días reales × (prod_real − prod_target).</div>
+</div>
+<script>
+const DATA = {{DEEP_DIVE_DATA}};
+
+const fmt = d3.format(",.0f");
+const fmt3 = d3.format(".3f");
+const red = "#A32D2D", green = "#1D9E75", gray = "#8A8780";
+const sign = v => (v > 0 ? "+" : "") + fmt(v);
+const colorClass = v => v < 0 ? "neg" : "pos";
+
+// ── KPI cards (dinámicas) ──────────────────────────────────────
+(function renderKPIs(){
+  const k = DATA.kpis;
+  const gapCls = k.total_gap >= 0 ? "pos" : "neg";
+  const cards = [
+    {label:"Gap productividad", value: sign(k.total_gap), sub:"stores equivalentes", cls: gapCls},
+    {label:"Prod real", value: fmt3(k.prod_real), sub:"stores / día"},
+    {label:"Prod target", value: fmt3(k.prod_target), sub:"ponderado por días"},
+    {label:"Stores reales", value: fmt(k.stores_real), sub:"semana"},
+    {label:"Hunters", value: fmt(k.hunters), sub:"con actividad"},
+    {label:"Días reales", value: fmt(k.dias), sub:"trabajados"},
+  ];
+  document.getElementById("kpis-section").innerHTML = cards.map(c=>
+    `<div class="card kpi"><div class="label">${c.label}</div><div class="value ${c.cls||""}">${c.value}</div><div class="sub">${c.sub}</div></div>`
+  ).join("");
+})();
+
+// ── Insights (dinámicos desde DATA.insights) ──────────────────
+(function renderInsights(){
+  const ins = DATA.insights || [];
+  document.getElementById("insights-section").innerHTML = ins.map((d,i)=>
+    `<div class="card insight"><b>${i+1}. ${d.titulo}</b><p>${d.texto}</p></div>`
+  ).join("");
+})();
+
+// ── Gráficas ──────────────────────────────────────────────────
+function barChart(selector, rows, opts={}){
+  const w = opts.width||540, h = opts.height||300;
+  const margin = {top:18, right:42, bottom:opts.bottom||48, left:opts.left||115};
+  const svg = d3.select(selector).append("svg").attr("viewBox",[0,0,w,h]);
+  const min = d3.min(rows,d=>Math.min(0,d.impacto)), max = d3.max(rows,d=>Math.max(0,d.impacto));
+  const pad = Math.max(8,(max-min)*.08);
+  const x = d3.scaleLinear().domain([min-pad,max+pad]).range([margin.left,w-margin.right]);
+  const y = d3.scaleBand().domain(rows.map(d=>d.label)).range([margin.top,h-margin.bottom]).padding(.24);
+  svg.append("g").attr("class","gridline").attr("transform",`translate(0,${h-margin.bottom})`).call(d3.axisBottom(x).ticks(6).tickSize(-(h-margin.top-margin.bottom)).tickFormat(""));
+  svg.append("line").attr("x1",x(0)).attr("x2",x(0)).attr("y1",margin.top).attr("y2",h-margin.bottom).attr("stroke","#333").attr("stroke-opacity",.25);
+  svg.append("g").attr("class","axis").attr("transform",`translate(0,${h-margin.bottom})`).call(d3.axisBottom(x).ticks(6));
+  svg.append("g").attr("class","axis").attr("transform",`translate(${margin.left},0)`).call(d3.axisLeft(y).tickSize(0)).call(g=>g.select(".domain").remove());
+  svg.selectAll("rect").data(rows).join("rect")
+    .attr("x",d=>x(Math.min(0,d.impacto))).attr("y",d=>y(d.label))
+    .attr("width",d=>Math.abs(x(d.impacto)-x(0))).attr("height",y.bandwidth())
+    .attr("rx",5).attr("fill",d=>d.impacto<0?red:green);
+  svg.selectAll(".val").data(rows).join("text")
+    .attr("x",d=>d.impacto<0?x(d.impacto)-6:x(d.impacto)+6)
+    .attr("y",d=>y(d.label)+y.bandwidth()/2).attr("dy",".35em")
+    .attr("text-anchor",d=>d.impacto<0?"end":"start")
+    .attr("font-size",11).attr("font-weight",700)
+    .attr("fill",d=>d.impacto<0?red:green).text(d=>sign(d.impacto));
+}
+
+// Aging
+barChart("#chart-aging", DATA.aging.map(d=>({label:d.aging,impacto:d.impacto})).sort((a,b)=>a.impacto-b.impacto), {height:270,left:95});
+const topAging = [...DATA.aging].sort((a,b)=>b.impacto-a.impacto)[0]||{};
+document.getElementById("note-aging").textContent = `${topAging.aging} concentra el mayor impacto positivo (${sign(topAging.impacto||0)} stores).`;
+
+// País
+barChart("#chart-country", DATA.country.map(d=>({label:d.country,impacto:d.impacto})).sort((a,b)=>a.impacto-b.impacto), {height:320,left:65});
+const topNeg = [...DATA.country].sort((a,b)=>a.impacto-b.impacto)[0]||{};
+document.getElementById("note-country").textContent = topNeg.impacto < 0
+  ? `${topNeg.country} es el principal país negativo (${sign(topNeg.impacto||0)}).`
+  : "Todos los países están sobre target de productividad.";
+
+// País × Aging
+barChart("#chart-country-aging", DATA.country_aging.sort((a,b)=>a.impacto-b.impacto).map(d=>({label:`${d.country} · ${d.aging}`,impacto:d.impacto})),
+  {height:Math.max(380, DATA.country_aging.length*26+60), left:135});
+
+// Buckets
+(function buckets(){
+  const rows = DATA.buckets.map(d=>({label:`${d.bucket} · ${d.hunters} hunters`, impacto:d.impacto})).sort((a,b)=>a.impacto-b.impacto);
+  barChart("#chart-buckets", rows, {height:330,left:190});
+  const overTarget = DATA.buckets.find(d=>d.bucket===">= target prod")||{};
+  const zero = DATA.buckets.find(d=>d.bucket==="00 stores")||{};
+  document.getElementById("note-buckets").textContent =
+    `${fmt(overTarget.hunters||0)} hunters sobre target generan ${sign(overTarget.impacto||0)}, compensando ${fmt(zero.hunters||0)} hunters con 0 stores (${sign(zero.impacto||0)}).`;
+})();
+
+// Tabla
+const tableRows = DATA.country_aging.sort((a,b)=>b.impacto-a.impacto);
+d3.select("#drivers-table tbody").selectAll("tr").data(tableRows).join("tr").html(d=>`
+  <td>${d.country}</td><td>${d.aging}</td>
+  <td class="r">${fmt(d.hunters)}</td><td class="r">${fmt(d.dias)}</td><td class="r">${fmt(d.stores)}</td>
+  <td class="r">${fmt3(d.prod_real)}</td><td class="r">${fmt3(d.prod_target)}</td>
+  <td class="r ${colorClass(d.impacto)}">${sign(d.impacto)}</td>
+`);
+</script>
+</body>
+</html>
