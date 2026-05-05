@@ -1,0 +1,127 @@
+report_id: bridge_is
+title: "Bridge IS — Stores vs Target"
+quarter_param: "Q2"
+
+# ─── MODALIDADES ────────────────────────────────────────────────────────────
+modes:
+  QTD:
+    description: "Todas las semanas del quarter con real disponible"
+    week_filter: "WEEK_DATE IN (SELECT DISTINCT WEEK_DATE FROM IS_FUNNEL_GOLD WHERE Q = :quarter)"
+    label: "QTD"
+  LW:
+    description: "Solo la última semana con real disponible"
+    week_filter: "WEEK_DATE = (SELECT MAX(WEEK_DATE) FROM IS_FUNNEL_GOLD WHERE Q = :quarter)"
+    label: "LW"
+
+# ─── DETECCIÓN TEMPORAL (semana vencida) ────────────────────────────────────
+temporal_detection:
+  step_1: "SELECT DISTINCT WEEK_DATE FROM IS_FUNNEL_GOLD WHERE Q = :quarter ORDER BY 1"
+  step_2_qtd: "Usar todas las semanas retornadas"
+  step_2_lw: "Usar solo MAX(WEEK_DATE)"
+  rule: "Nunca comparar target full-quarter contra actual parcial"
+  principle: "Semana vencida: solo incluir semanas cuyo real ya esté en el funnel"
+
+# ─── CANALES ────────────────────────────────────────────────────────────────
+channels:
+  - id: OUTBOUND
+    label: "OB"
+    proyecto_agrupado: "OUTBOUND"
+    proyecto_tg: "OUTBOUND"
+  - id: INBOUND
+    label: "IB"
+    proyecto_agrupado: "INBOUND"
+    proyecto_tg: "INBOUND"
+
+# ─── AGING MAPPING ──────────────────────────────────────────────────────────
+aging_map:
+  "New Entry": "01 - NEW ENTRY"
+  "Junior":    "02 - JUNIOR"
+  "Senior":    "03 - SENIOR"
+aging_normalize: "UPPER(TRIM(aging))"
+
+# ─── EFECTOS DEL BRIDGE ─────────────────────────────────────────────────────
+effects:
+  description: >
+    Descomposición secuencial target → real en 6 efectos.
+    La suma de los 6 efectos debe igualar exactamente stores_real - stores_tg.
+    El residuo de cierre se absorbe en ef_hc.
+
+  intermediate_variables:
+    prod_real: "SUM(stores_real) / NULLIF(SUM(dias_real), 0)"
+    prod_tg: >
+      SUM(prod_tg_row × hc_tg × dias_tg_por_agente) /
+      NULLIF(SUM(hc_tg × dias_tg_por_agente), 0)
+    prod_tg_mix_real: >
+      SUM(prod_tg_row × hc_real × dias_tg_por_agente) /
+      NULLIF(SUM(hc_real × dias_tg_por_agente), 0)
+    asist_real: "SUM(dias_real) / NULLIF(SUM(hc_real), 0)"
+    asist_tg: "SUM(dias_tg) / NULLIF(SUM(hc_tg), 0)"
+    dias_tg_por_agente: "stores_tg / (hc_tg × prod_tg)  [por fila aging+país+semana]"
+
+  formulas:
+    ef_prod:
+      label: "Productividad"
+      description: "Impacto de producir más/menos stores por día trabajado, controlando por mix aging real"
+      formula: "hc_real × asist_real × (prod_real − prod_tg_mix_real)"
+      sign_positive: "Real produce más que target con mismo mix"
+
+    ef_hc:
+      label: "Headcount"
+      description: "Impacto combinado de tener más/menos hunters y diferencia en asistencia vs target. Absorbe residuo de cierre."
+      formula: >
+        (hc_real − hc_tg) × asist_tg × prod_tg
+        + hc_real × (asist_real − asist_tg) × prod_tg
+        + residuo_cierre
+      residuo_cierre: >
+        desvio_total
+        − ef_prod
+        − ef_maturity
+        − [(hc_real−hc_tg)×asist_tg×prod_tg + hc_real×(asist_real−asist_tg)×prod_tg]
+      sign_positive: "Más hunters activos que target"
+
+    ef_maturity:
+      label: "Maturity"
+      description: "Impacto del mix aging real vs target sobre la productividad esperada"
+      formula: "hc_real × asist_real × (prod_tg_mix_real − prod_tg)"
+      sign_positive: "Mix real tiene más seniors que target"
+
+  order:
+    - "OB – Productividad"
+    - "OB – Headcount"
+    - "OB – Maturity"
+    - "IB – Productividad"
+    - "IB – Headcount"
+    - "IB – Maturity"
+
+  closure_check:
+    formula: "SUM(ef_prod_ob + ef_hc_ob + ef_maturity_ob + ef_prod_ib + ef_hc_ib + ef_maturity_ib) == stores_real_total − stores_tg_total"
+    action_if_fails: "Recalcular antes de responder. No responder si no cierra."
+
+# ─── SALIDA ESPERADA ─────────────────────────────────────────────────────────
+output:
+  fields:
+    - target_total: "SUM(stores_tg) sobre todas las combinaciones válidas"
+    - ef_ob_prod: integer con signo
+    - ef_ob_hc: integer con signo
+    - ef_ob_maturity: integer con signo
+    - ef_ib_prod: integer con signo
+    - ef_ib_hc: integer con signo
+    - ef_ib_maturity: integer con signo
+    - real_total: "SUM(stores_real)"
+    - desvio_total: "real_total − target_total"
+    - desvio_pct: "desvio_total / target_total"
+    - cierre_check: "suma_efectos − desvio_total (debe ser 0)"
+    - corte_semanas: lista de semanas incluidas
+    - modalidad: "QTD | LW"
+
+  format:
+    integers: separador de miles
+    pct: "1 decimal con signo, ej: −10.4%"
+
+# ─── VALIDACIONES OBLIGATORIAS ───────────────────────────────────────────────
+validations:
+  - "Verificar semanas en funnel antes de filtrar target"
+  - "FULL OUTER JOIN real ↔ target para no perder celdas con target sin real"
+  - "SUM(stores_tg) debe coincidir con SELECT SUM(TARGET) WHERE TIPO_TARGET='STORES' AND WEEK IN semanas_validas"
+  - "El bridge debe cerrar exacto: suma efectos = desvio_total"
+  - "Si no cierra, recalcular y no responder"
