@@ -1,0 +1,541 @@
+report_id: nuevo_framing_q2
+title: "Nuevo Framing Q2"
+quarter_param: ":quarter"
+default_quarter: "Q2"
+
+axis:
+  week_source_query: week_axis
+  label_column: "KPI"
+  qtd_column: "QTD"
+  gap_column: "GAP"
+
+display:
+  empty_value: null
+  missing_source_label: "N/A"
+  pending_definition_label: "Pending definition"
+  formats:
+    integer: "#,##0"
+    number: "#,##0.00"
+    percent: "0.00%"
+
+business_rules:
+  q_filter: "Always filter by Q explicitly"
+  target_cut_rule: "For QTD target comparison, use only weeks with actual available"
+  null_future_weeks_rule: "Future weeks without actual remain null"
+  old_rule: "Senior"
+  productivity_real_rule: "SUM(STORES_TOTALES) / SUM(DIAS_TRABAJADOS)"
+  hc_real_rule: "COUNT(DISTINCT HUNTER_EMAIL) WHERE HC = 1"
+  target_hc_old_rule: "HC target senior / HC target total"
+  target_macro_rule: "Do not average productivity targets at macro level. Recalculate target stores from productividad_target * dias_trabajados_reales and then derive target productivity as target_stores_macro / dias_trabajados_reales_total"
+  target_join_rule: "Always aggregate ELC targets before joining to actuals. Include full target granularity to avoid duplication"
+
+qtd_rules:
+  additive: "SUM(non_null_week_values)"
+  avg: "AVG(non_null_week_values)"
+  weighted_ratio: "SUM(numerator_parts) / NULLIF(SUM(denominator_parts),0)"
+  weighted_productivity: "SUM(stores_parts) / NULLIF(SUM(days_parts),0)"
+
+gap_rule: "QTD actual - QTD target"
+
+sections:
+
+  - id: main_metrics_top
+    title: "Main Metrics"
+    range: "D18:U24"
+    rows:
+      - label: "% Lead Penetration"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "Total Available Stores"
+        source: main_metrics_top_query
+        field: total_available_stores
+        format: integer
+        qtd_rule: additive
+
+      - label: "Net Adds"
+        source: none
+        render_as: pending_definition
+        format: integer
+
+      - label: "Total Active Stores"
+        source: main_metrics_top_query
+        field: total_active_stores
+        format: integer
+        qtd_rule: additive
+
+      - label: "% Activation Rate"
+        source: main_metrics_top_query
+        field: activation_rate_pct
+        format: percent
+        qtd_rule: weighted_ratio
+
+      - label: "Net Active Adds"
+        source: none
+        render_as: pending_definition
+        format: integer
+
+  - id: main_metrics_bottom
+    title: "Main Metrics"
+    range: "D33:U73"
+    rows:
+      - label: "New Available Stores"
+        source: main_metrics_bottom_query
+        field: new_available_stores
+        format: integer
+        qtd_rule: additive
+
+      - label: "New Active Stores"
+        source: main_metrics_bottom_query
+        field: new_active_stores
+        format: integer
+        qtd_rule: additive
+
+      - label: "New Inflow Active Rate"
+        source: main_metrics_bottom_query
+        field: new_inflow_active_rate_pct
+        format: percent
+        qtd_rule: weighted_ratio
+
+  - id: hunting
+    title: "Hunting"
+    range: "D75:U99"
+    rows:
+      - label: "Total New Available Stores Hunting"
+        source: hunting_query
+        field: total_new_available_stores_hunting
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Total New Available Stores Hunting"
+        source: hunting_query
+        field: target_total_new_available_stores_hunting
+        format: integer
+        qtd_rule: additive
+        gap_against: "Total New Available Stores Hunting"
+
+      - label: "Total Hunting Store_Created"
+        source: hunting_query
+        field: total_hunting_store_created
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Hunting Store_Created"
+        source: hunting_query
+        field: target_hunting_store_created
+        format: number
+        qtd_rule: additive
+        gap_against: "Total Hunting Store_Created"
+
+      - label: "Total Hunting Productivity"
+        source: hunting_query
+        field: total_hunting_productivity
+        format: number
+        qtd_rule: weighted_productivity
+
+      - label: "Target Hunting Productivity"
+        source: hunting_query
+        field: target_hunting_productivity
+        format: number
+        qtd_rule: weighted_productivity
+        gap_against: "Total Hunting Productivity"
+
+      - label: "% New Signings Perfect Stores"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "Total Hunting Headcount"
+        source: hunting_query
+        field: total_hunting_headcount
+        format: number
+        qtd_rule: avg
+
+      - label: "Target Hunting Headcount"
+        source: hunting_query
+        field: target_hunting_headcount
+        format: number
+        qtd_rule: avg
+        gap_against: "Total Hunting Headcount"
+
+      - label: "% Hunters Old"
+        source: hunting_query
+        field: pct_hunters_old
+        format: percent
+        qtd_rule: weighted_ratio
+
+      - label: "% Target Hunters Old"
+        source: hunting_query
+        field: pct_target_hc_old
+        format: percent
+        qtd_rule: weighted_ratio
+        gap_against: "% Hunters Old"
+
+      - label: "% Handoff done <= 3 days"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% Handoff / Signings (Closed cohort) - 7D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_Log_in rate (Closed cohort) - 7D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "Avg days from Signing to Handoff"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "Avg days from Signing to Log_in"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "Avg days from Log_in to First_Order"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "% Handoff / Signings (Closed cohort) - 28D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_Log_in rate (Closed cohort) - 28D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_order rate (Closed cohort)"
+        source: none
+        render_as: missing_source
+        format: percent
+
+  - id: inside_sales_outbound
+    title: "Inside Sales Outbound"
+    range: "D101:U125"
+    rows:
+      - label: "Total New Available Stores Inside Sales Outbound"
+        source: inside_sales_outbound_query
+        field: total_new_available_stores_is_outbound
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Total New Available Stores Inside Sales Outbound"
+        source: inside_sales_outbound_query
+        field: target_total_new_available_stores_is_outbound
+        format: integer
+        qtd_rule: additive
+        gap_against: "Total New Available Stores Inside Sales Outbound"
+
+      - label: "Total Inside Sales Outbound Store_Created"
+        source: inside_sales_outbound_query
+        field: total_is_outbound_store_created
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Inside Sales Outbound Store_Created"
+        source: inside_sales_outbound_query
+        field: target_is_outbound_store_created
+        format: number
+        qtd_rule: additive
+        gap_against: "Total Inside Sales Outbound Store_Created"
+
+      - label: "Total Inside Sales Outbound Productivity"
+        source: inside_sales_outbound_query
+        field: total_is_outbound_productivity
+        format: number
+        qtd_rule: weighted_productivity
+
+      - label: "Target Inside Sales Outbound Productivity"
+        source: inside_sales_outbound_query
+        field: target_is_outbound_productivity
+        format: number
+        qtd_rule: weighted_productivity
+        gap_against: "Total Inside Sales Outbound Productivity"
+
+      - label: "% New Signings Perfect Stores"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "Total Inside Sales Outbound Headcount"
+        source: inside_sales_outbound_query
+        field: total_is_outbound_headcount
+        format: number
+        qtd_rule: avg
+
+      - label: "Target Inside Sales Outbound Headcount"
+        source: inside_sales_outbound_query
+        field: target_is_outbound_headcount
+        format: number
+        qtd_rule: avg
+        gap_against: "Total Inside Sales Outbound Headcount"
+
+      - label: "% Agents Old"
+        source: inside_sales_outbound_query
+        field: pct_agents_old
+        format: percent
+        qtd_rule: weighted_ratio
+
+      - label: "% Target Agents Old"
+        source: inside_sales_outbound_query
+        field: pct_target_hc_old
+        format: percent
+        qtd_rule: weighted_ratio
+        gap_against: "% Agents Old"
+
+      - label: "% Handoff done <= 3 days"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% Handoff / Signings (Closed cohort) - 7D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_Log_in rate (Closed cohort) - 7D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "Avg days from Signing to Handoff"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "Avg days from Signing to Log_in"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "Avg days from Log_in to First_Order"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "% Handoff / Signings (Closed cohort) - 28D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_Log_in rate (Closed cohort) - 28D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_order rate (Closed cohort)"
+        source: none
+        render_as: missing_source
+        format: percent
+
+  - id: inside_sales_inbound
+    title: "Inside Sales Inbound"
+    range: "D127:U153"
+    rows:
+      - label: "Total New Available Stores Inside Sales Inbound"
+        source: inside_sales_inbound_query
+        field: total_new_available_stores_is_inbound
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Total New Available Stores Inside Sales Inbound"
+        source: inside_sales_inbound_query
+        field: target_total_new_available_stores_is_inbound
+        format: integer
+        qtd_rule: additive
+        gap_against: "Total New Available Stores Inside Sales Inbound"
+
+      - label: "Target Inbound Verified Leads"
+        source: none
+        render_as: missing_source
+        format: integer
+
+      - label: "Total Inside Sales Inbound Store_Created"
+        source: inside_sales_inbound_query
+        field: total_is_inbound_store_created
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Inside Sales Inbound Store_Created"
+        source: inside_sales_inbound_query
+        field: target_is_inbound_store_created
+        format: number
+        qtd_rule: additive
+        gap_against: "Total Inside Sales Inbound Store_Created"
+
+      - label: "Total Inside Sales Inbound Productivity"
+        source: inside_sales_inbound_query
+        field: total_is_inbound_productivity
+        format: number
+        qtd_rule: weighted_productivity
+
+      - label: "Target Inside Sales Inbound Productivity"
+        source: inside_sales_inbound_query
+        field: target_is_inbound_productivity
+        format: number
+        qtd_rule: weighted_productivity
+        gap_against: "Total Inside Sales Inbound Productivity"
+
+      - label: "% New Signings Perfect Stores"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "Total Inside Sales Inbound Headcount"
+        source: inside_sales_inbound_query
+        field: total_is_inbound_headcount
+        format: number
+        qtd_rule: avg
+
+      - label: "Target Inside Sales Inbound Headcount"
+        source: inside_sales_inbound_query
+        field: target_is_inbound_headcount
+        format: number
+        qtd_rule: avg
+        gap_against: "Total Inside Sales Inbound Headcount"
+
+      - label: "% Agents Old"
+        source: inside_sales_inbound_query
+        field: pct_agents_old
+        format: percent
+        qtd_rule: weighted_ratio
+
+      - label: "% Target Agents Old"
+        source: inside_sales_inbound_query
+        field: pct_target_hc_old
+        format: percent
+        qtd_rule: weighted_ratio
+        gap_against: "% Agents Old"
+
+      - label: "% Handoff done <= 3 days"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% Handoff / Signings (Closed cohort) - 7D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_Log_in rate (Closed cohort) - 7D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "Avg days from Signing to Handoff"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "Avg days from Signing to Log_in"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "Avg days from Log_in to First_Order"
+        source: none
+        render_as: missing_source
+        format: number
+
+      - label: "% Handoff / Signings (Closed cohort) - 28D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_Log_in rate (Closed cohort) - 28D"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_order rate (Closed cohort)"
+        source: none
+        render_as: missing_source
+        format: percent
+
+  - id: self_onboarding
+    title: "Self-Onboarding"
+    range: "D155:U166"
+    rows:
+      - label: "Total New Available Stores Self Onboarding"
+        source: self_onboarding_query
+        field: total_new_available_stores_self_onboarding
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Total New Available Stores Self Onboarding"
+        source: self_onboarding_query
+        field: target_total_new_available_stores_self_onboarding
+        format: integer
+        qtd_rule: additive
+        gap_against: "Total New Available Stores Self Onboarding"
+
+      - label: "Total Self Onboarding Store_Created"
+        source: none
+        render_as: missing_source
+        format: integer
+
+      - label: "Target Self Onboarding Store_Created"
+        source: none
+        render_as: missing_source
+        format: integer
+
+      - label: "VL Leads"
+        source: none
+        render_as: missing_source
+        format: integer
+
+      - label: "VL Leads Target"
+        source: none
+        render_as: missing_source
+        format: integer
+
+      - label: "Conv E2E"
+        source: none
+        render_as: pending_definition
+        format: percent
+
+  - id: brand_expansion
+    title: "Brand Expansion"
+    range: "D168:U176"
+    rows:
+      - label: "Total New Available Stores Brand Expansion"
+        source: brand_expansion_query
+        field: total_new_available_stores_brand_expansion
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Total New Available Stores Brand Expansion"
+        source: brand_expansion_query
+        field: target_total_new_available_stores_brand_expansion
+        format: integer
+        qtd_rule: additive
+        gap_against: "Total New Available Stores Brand Expansion"
+
+      - label: "Total Brand Expansion Store_Created"
+        source: brand_expansion_query
+        field: total_brand_expansion_store_created
+        format: integer
+        qtd_rule: additive
+
+      - label: "Target Brand Expansion Store_Created"
+        source: none
+        render_as: missing_source
+        format: integer
+
+      - label: "% First_Log_in rate (Closed cohort)"
+        source: none
+        render_as: missing_source
+        format: percent
+
+      - label: "% First_order rate (Closed cohort)"
+        source: none
+        render_as: missing_source
+        format: percent
