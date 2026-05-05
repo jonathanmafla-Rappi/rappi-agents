@@ -1,0 +1,124 @@
+report_id: bridge_ht
+title: "Bridge HT — Stores vs Target"
+quarter_param: "Q2"
+
+# ─── MODALIDADES ────────────────────────────────────────────────────────────
+modes:
+  QTD:
+    description: "Todas las semanas del quarter con real disponible"
+    week_filter: "WEEK_DATE IN (SELECT DISTINCT WEEK_DATE FROM HT_FUNNEL_GOLD WHERE Q = :quarter)"
+    label: "QTD"
+  LW:
+    description: "Solo la última semana con real disponible"
+    week_filter: "WEEK_DATE = (SELECT MAX(WEEK_DATE) FROM HT_FUNNEL_GOLD WHERE Q = :quarter)"
+    label: "LW"
+
+# ─── DETECCIÓN TEMPORAL ─────────────────────────────────────────────────────
+temporal_detection:
+  step_1: "SELECT DISTINCT WEEK_DATE FROM HT_FUNNEL_GOLD WHERE Q = :quarter ORDER BY 1"
+  step_2_qtd: "Usar todas las semanas retornadas"
+  step_2_lw: "Usar solo MAX(WEEK_DATE)"
+  rule: "Nunca comparar target full-quarter contra actual parcial"
+
+# ─── AGING MAPPING ──────────────────────────────────────────────────────────
+aging_map:
+  "New Entry": "01 - new entry"
+  "Junior":    "02 - junior"
+  "Senior":    "03 - senior"
+
+# ─── ACTUAL (stores real) ───────────────────────────────────────────────────
+actual_definition:
+  description: "SUM(STORES_TOTALES) sin filtro de HC — incluye hunters salidos (HC=0)"
+  rationale: "Total operativo bruto del período, consistente con la producción registrada"
+
+# ─── EFECTOS DEL BRIDGE ─────────────────────────────────────────────────────
+effects:
+  description: >
+    Descomposición secuencial en 4 mundos que cierra exacto.
+    target_reconstruido + ef_prod + ef_madurez + ef_hc + ef_ausencias = stores_real
+
+  worlds:
+    S0:
+      formula: "SUM(tg_hc * dias_pp_tg * tg_prod)"
+      description: "Todo target — debe aproximarse al target oficial de STORES"
+    S1:
+      formula: "SUM(tg_hc * dias_pp_tg * prod_real)"
+      description: "Sustituye prod real por aging — aísla efecto productividad"
+    S2m:
+      formula: "SUM(tg_hc_total_semana_pais * (hc_real/hc_real_total) * dias_pp_tg * prod_real)"
+      description: "Sustituye mix aging real manteniendo volumen target — aísla efecto madurez"
+    S2:
+      formula: "SUM(hc_real * dias_pp_tg * prod_real)"
+      description: "Sustituye HC real por aging — aísla efecto headcount"
+    S3:
+      formula: "SUM(stores_real)"
+      description: "Stores reales (total bruto) — aísla efecto ausencias"
+
+  intermediate_variables:
+    dias_pp_tg: "stores_tg / (hc_tg * prod_tg)  [por fila aging+país+semana, 0 si denominador=0]"
+    prod_real_por_aging: "SUM(stores_totales) / NULLIF(SUM(dias_trabajados), 0)  [por aging+país+semana]"
+    dias_pp_real: "SUM(dias HC=1) / NULLIF(COUNT(DISTINCT hunters HC=1), 0)"
+
+  formulas:
+    ef_prod:
+      label: "Productividad"
+      formula: "S1 - S0"
+      description: "Impacto de producir más/menos stores por día dentro de cada aging"
+      sign_positive: "Prod real > prod target"
+
+    ef_madurez:
+      label: "Madurez"
+      formula: "S2m - S1"
+      description: "Impacto del mix aging real vs target. Positivo si hay más seniors de lo esperado"
+      sign_positive: "Mix real más senior que target"
+
+    ef_hc:
+      label: "Headcount"
+      formula: "S2 - S2m"
+      description: "Impacto del volumen de HC real vs target (manteniendo mix y prod reales)"
+      sign_positive: "Más hunters activos que target"
+
+    ef_ausencias:
+      label: "Ausencias"
+      formula: "S3 - S2"
+      description: "Impacto de días reales trabajados vs días implícitos en el target"
+      sign_positive: "Más días trabajados que el target implica"
+
+  order:
+    - "Productividad"
+    - "Madurez"
+    - "Headcount"
+    - "Ausencias"
+
+  closure_check:
+    formula: "S0 + ef_prod + ef_madurez + ef_hc + ef_ausencias == stores_real"
+    note: "S0 puede diferir ligeramente del target oficial por filas sin real. El bridge cierra sobre S0."
+    action_if_fails: "Recalcular antes de responder. No responder si no cierra."
+
+# ─── SALIDA ESPERADA ─────────────────────────────────────────────────────────
+output:
+  fields:
+    - target_total: "SUM(TARGET) WHERE TIPO_TARGET='STORES' AND WEEK IN semanas_validas"
+    - target_reconstruido: "S0 (puede diferir levemente de target_total)"
+    - ef_prod: integer con signo
+    - ef_madurez: integer con signo
+    - ef_hc: integer con signo
+    - ef_ausencias: integer con signo
+    - real_total: "SUM(STORES_TOTALES) sin filtro HC"
+    - desvio_total: "real_total - target_total"
+    - desvio_pct: "desvio_total / target_total"
+    - cierre_check: "S0 + suma_efectos - real_total (debe ser 0)"
+    - corte_semanas: lista de semanas incluidas
+    - modalidad: "QTD | LW"
+
+  format:
+    integers: separador de miles
+    pct: "1 decimal con signo, ej: -11.8%"
+
+# ─── VALIDACIONES OBLIGATORIAS ───────────────────────────────────────────────
+validations:
+  - "Verificar semanas en funnel antes de filtrar target"
+  - "Universo base = tabla target (LEFT JOIN real), para capturar combinaciones sin real"
+  - "El bridge debe cerrar exacto: S0 + SUM(efectos) = stores_real"
+  - "Si no cierra, recalcular y no responder"
+  - "Mostrar corte temporal utilizado en el reporte"
