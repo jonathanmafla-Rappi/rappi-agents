@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Deep Dive Productividad IS — LW {{WEEK}}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+:root{--bg:#F7F6F3;--card:#FFFFFF;--ink:#171717;--muted:#6D6A63;--line:#E2E0D8;--blue:#185FA5;--red:#A32D2D;--green:#1D9E75;--amber:#B8860B;--gray:#8A8780}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink)}
+.wrapper{max-width:1180px;margin:0 auto;padding:28px 20px 36px}
+.header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}
+h1{font-size:26px;line-height:1.1;margin:0 0 6px;font-weight:750}
+.subtitle{color:var(--muted);font-size:13px}.badge{display:inline-block;background:#DCEAF8;color:var(--blue);border:1px solid #BCD5EE;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:650}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.kpi{padding:16px}.kpi .label{color:var(--muted);font-size:12px}.kpi .value{font-size:28px;font-weight:760;margin-top:4px}.kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.wide{grid-column:1/-1}.chart-card{padding:16px 18px 14px}
+.chart-title{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}.chart-title h2{font-size:15px;margin:0;text-transform:uppercase;letter-spacing:.04em;color:#383630}.chart-title span{font-size:12px;color:var(--muted)}
+svg{width:100%;height:auto;display:block}.axis text{font-size:11px;fill:var(--muted)}.axis path,.axis line{stroke:#D7D4CC}.gridline line{stroke:#ECE9E2}
+.note{font-size:13px;color:var(--muted);line-height:1.45;margin:8px 0 0}
+.insights{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}.insight{padding:14px}.insight b{display:block;margin-bottom:4px;font-size:14px}.insight p{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 9px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-weight:650}.r{text-align:right}.neg{color:var(--red);font-weight:650}.pos{color:var(--green);font-weight:650}.footer{margin-top:18px;color:var(--muted);font-size:11px;border-top:1px solid var(--line);padding-top:12px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}.grid,.insights{grid-template-columns:1fr}.header{display:block}}
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <div class="header">
+    <div>
+      <h1>Deep Dive Ejecutivo — Gap de Productividad IS</h1>
+      <div class="subtitle">Semana {{WEEK}} · {{QUARTER}} · Fuente: Snowflake · IS_FUNNEL_GOLD + TG_IS_2026_GOLD</div>
+    </div>
+    <div class="badge">LW · Productividad</div>
+  </div>
+
+  <div class="kpis" id="kpis-section"></div>
+  <div class="insights" id="insights-section"></div>
+
+  <div class="grid">
+    <div class="card chart-card">
+      <div class="chart-title"><h2>Gap productividad por proyecto</h2><span>stores equivalentes</span></div>
+      <div id="chart-project"></div>
+      <p class="note" id="note-project"></p>
+    </div>
+    <div class="card chart-card">
+      <div class="chart-title"><h2>Pareto por país</h2><span>ordenado por impacto total</span></div>
+      <div id="chart-country"></div>
+      <p class="note" id="note-country"></p>
+    </div>
+
+    <div class="card chart-card wide">
+      <div class="chart-title"><h2>Top celdas país + aging</h2><span>principales arrastres y excepciones positivas</span></div>
+      <div id="chart-aging"></div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="chart-title"><h2>Buckets INBOUND</h2><span>hunters por performance</span></div>
+      <div id="chart-buckets-ib"></div>
+    </div>
+    <div class="card chart-card">
+      <div class="chart-title"><h2>Buckets OUTBOUND</h2><span>hunters por performance</span></div>
+      <div id="chart-buckets-ob"></div>
+    </div>
+
+    <div class="card chart-card wide">
+      <div class="chart-title"><h2>Tabla ejecutiva — top drivers</h2><span>impacto productividad (top 12 arrastres)</span></div>
+      <table id="drivers-table">
+        <thead><tr><th>Proyecto</th><th>País</th><th>Aging</th><th class="r">Hunters</th><th class="r">Días</th><th class="r">Stores</th><th class="r">Prod Real</th><th class="r">Target</th><th class="r">Impacto</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">Fuente: Snowflake · Semana {{WEEK}} · Cálculo: impacto productividad = días reales × (prod_real − prod_target). Para proyecto se usa target ajustado al mix real de aging.</div>
+</div>
+<script>
+const DATA = {{DEEP_DIVE_DATA}};
+
+const fmt = d3.format(",.0f");
+const fmt3 = d3.format(".3f");
+const red = "#A32D2D", green = "#1D9E75", blue = "#185FA5", gray = "#8A8780";
+const sign = v => (v > 0 ? "+" : "") + fmt(v);
+const colorClass = v => v < 0 ? "neg" : "pos";
+
+// ── KPI cards (dinámicas) ──────────────────────────────────────
+(function renderKPIs(){
+  const ib = DATA.project.find(d=>d.proyecto==="INBOUND") || {};
+  const ob = DATA.project.find(d=>d.proyecto==="OUTBOUND") || {};
+  const total = DATA.kpis.total_gap;
+  const ibShare = Math.round(Math.abs(ib.impacto||0) / Math.max(1,Math.abs(total)) * 100);
+  const obShare = 100 - ibShare;
+  const obZero = DATA.buckets.filter(d=>d.proyecto==="OUTBOUND"&&d.bucket==="00 stores");
+  const zeroHunters = obZero.length ? obZero[0].hunters : 0;
+  const topCountry = [...new Set(DATA.country.map(d=>d.country))]
+    .map(c=>({c, v:DATA.country.filter(x=>x.country===c).reduce((s,x)=>s+x.impacto,0)}))
+    .sort((a,b)=>a.v-b.v)[0] || {};
+
+  const cards = [
+    {label:"Gap productividad total", value: sign(total), sub:"stores equivalentes", cls: colorClass(total)},
+    {label:"INBOUND", value: sign(ib.impacto||0), sub:`${ibShare}% del gap`, cls: colorClass(ib.impacto||0)},
+    {label:"OUTBOUND", value: sign(ob.impacto||0), sub:`${obShare}% del gap`, cls: colorClass(ob.impacto||0)},
+    {label:"Mayor foco país", value: topCountry.c||"—", sub: `${sign(topCountry.v||0)} stores`, cls: colorClass(topCountry.v||0)},
+    {label:"Mayor fuga operativa", value: fmt(zeroHunters), sub:"OB hunters con 0 stores", cls:"neg"},
+  ];
+  document.getElementById("kpis-section").innerHTML = cards.map(c=>
+    `<div class="card kpi"><div class="label">${c.label}</div><div class="value ${c.cls}">${c.value}</div><div class="sub">${c.sub}</div></div>`
+  ).join("");
+})();
+
+// ── Insights (dinámicos desde DATA.insights) ──────────────────
+(function renderInsights(){
+  const ins = DATA.insights || [];
+  document.getElementById("insights-section").innerHTML = ins.map((d,i)=>
+    `<div class="card insight"><b>${i+1}. ${d.titulo}</b><p>${d.texto}</p></div>`
+  ).join("");
+})();
+
+// ── Gráficas ──────────────────────────────────────────────────
+function barChart(selector, data, opts={}){
+  const w = opts.width || 520, h = opts.height || 280;
+  const margin = {top:18, right:30, bottom:opts.bottom||50, left:opts.left||110};
+  const svg = d3.select(selector).append("svg").attr("viewBox", [0,0,w,h]);
+  const xExtent = d3.extent(data.flatMap(d=>[0,d.impacto]));
+  const pad = Math.max(10, Math.abs(xExtent[0])*.08);
+  const x = d3.scaleLinear().domain([xExtent[0]-pad, Math.max(xExtent[1]+pad,20)]).range([margin.left, w-margin.right]);
+  const y = d3.scaleBand().domain(data.map(d=>d.label)).range([margin.top, h-margin.bottom]).padding(.25);
+  svg.append("g").attr("class","gridline").attr("transform",`translate(0,${h-margin.bottom})`).call(d3.axisBottom(x).ticks(5).tickSize(-(h-margin.top-margin.bottom)).tickFormat(""));
+  svg.append("line").attr("x1",x(0)).attr("x2",x(0)).attr("y1",margin.top).attr("y2",h-margin.bottom).attr("stroke","#333").attr("stroke-opacity",.25);
+  svg.append("g").attr("class","axis").attr("transform",`translate(0,${h-margin.bottom})`).call(d3.axisBottom(x).ticks(5));
+  svg.append("g").attr("class","axis").attr("transform",`translate(${margin.left},0)`).call(d3.axisLeft(y).tickSize(0)).call(g=>g.select(".domain").remove());
+  svg.selectAll("rect").data(data).join("rect")
+    .attr("x",d=>x(Math.min(0,d.impacto))).attr("y",d=>y(d.label))
+    .attr("width",d=>Math.abs(x(d.impacto)-x(0))).attr("height",y.bandwidth())
+    .attr("rx",5).attr("fill",d=>d.impacto<0?red:green);
+  svg.selectAll(".val").data(data).join("text")
+    .attr("class","val").attr("x",d=>d.impacto<0?x(d.impacto)-6:x(d.impacto)+6)
+    .attr("y",d=>y(d.label)+y.bandwidth()/2).attr("dy",".35em")
+    .attr("text-anchor",d=>d.impacto<0?"end":"start").attr("font-size",11).attr("font-weight",650)
+    .attr("fill",d=>d.impacto<0?red:green).text(d=>sign(d.impacto));
+}
+
+function projectChart(){
+  const rows = DATA.project.map(d=>({label:d.proyecto, impacto:d.impacto})).sort((a,b)=>a.impacto-b.impacto);
+  barChart("#chart-project", rows, {height:250,left:95});
+  const worst = rows[0];
+  document.getElementById("note-project").textContent = `${worst.label} es el proyecto con mayor arrastre (${sign(worst.impacto)} stores).`;
+}
+
+function countryChart(){
+  const agg = d3.rollups(DATA.country, v=>d3.sum(v,d=>d.impacto), d=>d.country)
+    .map(([country,impacto])=>({label:country, impacto}))
+    .sort((a,b)=>a.impacto-b.impacto);
+  barChart("#chart-country", agg, {height:300,left:70});
+  const worst = agg[0];
+  document.getElementById("note-country").textContent = `${worst.label} concentra ${sign(worst.impacto)} stores de impacto negativo.`;
+}
+
+function agingChart(){
+  const rows = DATA.aging.sort((a,b)=>a.impacto-b.impacto).slice(0,12)
+    .map(d=>({label:`${d.proyecto.slice(0,2)} · ${d.country} · ${d.aging}`, impacto:d.impacto}));
+  barChart("#chart-aging", rows, {height:Math.max(320,rows.length*28+60), left:155, bottom:42});
+}
+
+function bucketChart(selector, proyecto){
+  const order = ["00 stores","<50% target prod","50-80% target prod","80-100% target prod",">= target prod"];
+  const rows = DATA.buckets.filter(d=>d.proyecto===proyecto).sort((a,b)=>order.indexOf(a.bucket)-order.indexOf(b.bucket));
+  const w=520,h=310, margin={top:18,right:44,bottom:48,left:135};
+  const svg=d3.select(selector).append("svg").attr("viewBox",[0,0,w,h]);
+  const x=d3.scaleLinear().domain([Math.min(-350,d3.min(rows,d=>d.impacto)-20),Math.max(150,d3.max(rows,d=>d.impacto)+20)]).range([margin.left,w-margin.right]);
+  const y=d3.scaleBand().domain(rows.map(d=>d.bucket)).range([margin.top,h-margin.bottom]).padding(.22);
+  svg.append("g").attr("class","gridline").attr("transform",`translate(0,${h-margin.bottom})`).call(d3.axisBottom(x).ticks(5).tickSize(-(h-margin.top-margin.bottom)).tickFormat(""));
+  svg.append("line").attr("x1",x(0)).attr("x2",x(0)).attr("y1",margin.top).attr("y2",h-margin.bottom).attr("stroke","#333").attr("stroke-opacity",.25);
+  svg.append("g").attr("class","axis").attr("transform",`translate(0,${h-margin.bottom})`).call(d3.axisBottom(x).ticks(5));
+  svg.append("g").attr("class","axis").attr("transform",`translate(${margin.left},0)`).call(d3.axisLeft(y).tickSize(0)).call(g=>g.select(".domain").remove());
+  svg.selectAll("rect").data(rows).join("rect")
+    .attr("x",d=>x(Math.min(0,d.impacto))).attr("y",d=>y(d.bucket))
+    .attr("width",d=>Math.abs(x(d.impacto)-x(0))).attr("height",y.bandwidth())
+    .attr("rx",5).attr("fill",d=>d.impacto<0?red:green);
+  svg.selectAll(".val").data(rows).join("text")
+    .attr("x",d=>d.impacto<0?x(d.impacto)-6:x(d.impacto)+6).attr("y",d=>y(d.bucket)+y.bandwidth()/2-6)
+    .attr("dy",".35em").attr("text-anchor",d=>d.impacto<0?"end":"start").attr("font-size",11).attr("font-weight",650)
+    .attr("fill",d=>d.impacto<0?red:green).text(d=>sign(d.impacto));
+  svg.selectAll(".hunters").data(rows).join("text")
+    .attr("x",d=>d.impacto<0?x(d.impacto)-6:x(d.impacto)+6).attr("y",d=>y(d.bucket)+y.bandwidth()/2+9)
+    .attr("text-anchor",d=>d.impacto<0?"end":"start").attr("font-size",10).attr("fill",gray)
+    .text(d=>`${fmt(d.hunters)} hunters`);
+}
+
+function table(){
+  const rows = DATA.aging.sort((a,b)=>a.impacto-b.impacto).slice(0,12);
+  d3.select("#drivers-table tbody").selectAll("tr").data(rows).join("tr").html(d=>`
+    <td>${d.proyecto}</td><td>${d.country}</td><td>${d.aging}</td>
+    <td class="r">${fmt(d.hunters)}</td><td class="r">${fmt(d.dias)}</td><td class="r">${fmt(d.stores)}</td>
+    <td class="r">${fmt3(d.prod_real)}</td><td class="r">${fmt3(d.prod_target)}</td>
+    <td class="r ${colorClass(d.impacto)}">${sign(d.impacto)}</td>
+  `);
+}
+
+projectChart(); countryChart(); agingChart();
+bucketChart("#chart-buckets-ib","INBOUND");
+bucketChart("#chart-buckets-ob","OUTBOUND");
+table();
+</script>
+</body>
+</html>
