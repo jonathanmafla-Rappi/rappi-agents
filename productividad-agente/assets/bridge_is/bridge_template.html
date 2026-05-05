@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Bridge IS — Stores vs Target</title>
+<style>
+  /* ── Reset y variables ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:        #F7F6F3;
+    --surface:   #FFFFFF;
+    --surface2:  #F0EEE9;
+    --border:    #E2E0D8;
+    --text:      #1A1917;
+    --muted:     #73726C;
+    --blue:      #185FA5;
+    --blue-l:    #B5D4F4;
+    --green:     #1D9E75;
+    --green-l:   #D1F5EB;
+    --red:       #A32D2D;
+    --red-l:     #F7C1C1;
+    --yellow:    #B8860B;
+    --radius:    8px;
+    --shadow:    0 1px 3px rgba(0,0,0,.08);
+  }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ── Layout ── */
+  .wrapper { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+
+  /* ── Header ── */
+  .header { margin-bottom: 20px; }
+  .header h1 { font-size: 20px; font-weight: 600; color: var(--text); }
+  .header .meta { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; background: var(--blue-l); color: var(--blue); }
+
+  /* ── KPI cards ── */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+  @media (max-width: 600px) { .kpi-row { grid-template-columns: 1fr 1fr; } }
+  .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); }
+  .kpi-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .kpi-value { font-size: 22px; font-weight: 600; }
+  .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+
+  /* ── Chart container ── */
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; box-shadow: var(--shadow); }
+  .chart-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
+  .leg-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .leg-sq { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  canvas { display: block; width: 100% !important; }
+
+  /* ── Tooltip ── */
+  #tooltip {
+    position: fixed; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px 12px; font-size: 12px;
+    pointer-events: none; opacity: 0; transition: opacity .12s;
+    z-index: 100; min-width: 170px; line-height: 1.7; box-shadow: var(--shadow);
+  }
+
+  /* ── Tabla resumen ── */
+  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; box-shadow: var(--shadow); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { padding: 6px 10px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); text-align: left; }
+  th.r, td.r { text-align: right; }
+  td { padding: 5px 10px; border-bottom: .5px solid var(--border); }
+  tr:last-child td { border-bottom: none; font-weight: 600; border-top: 1px solid var(--border); }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 500; }
+  .pill-pos { background: var(--green-l); color: var(--green); }
+  .pill-neg { background: var(--red-l);   color: var(--red);   }
+  .pill-zer { background: var(--surface2); color: var(--muted); }
+
+  /* ── Footer ── */
+  .footer { font-size: 11px; color: var(--muted); padding: 12px 0; border-top: .5px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- HEADER -->
+  <div class="header">
+    <h1>Bridge IS — Stores vs Target <span class="badge" id="badge-modalidad">QTD</span></h1>
+    <div class="meta">
+      <span id="meta-semanas">Semanas: cargando...</span>
+      <span id="meta-generado">Generado: —</span>
+    </div>
+  </div>
+
+  <!-- KPI CARDS -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-label">Target total</div>
+      <div class="kpi-value" id="kpi-target">—</div>
+      <div class="kpi-sub">stores</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Real total</div>
+      <div class="kpi-value" id="kpi-real">—</div>
+      <div class="kpi-sub">stores</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Desvío</div>
+      <div class="kpi-value" id="kpi-desvio">—</div>
+      <div class="kpi-sub" id="kpi-desvio-pct">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Semanas cubiertas</div>
+      <div class="kpi-value" id="kpi-semanas">—</div>
+      <div class="kpi-sub" id="kpi-modalidad-label">—</div>
+    </div>
+  </div>
+
+  <!-- WATERFALL -->
+  <div class="chart-card">
+    <div class="chart-title">Descomposición del gap por efecto</div>
+    <div class="legend">
+      <div class="leg-item"><div class="leg-sq" style="background:#185FA5"></div>Base / Total</div>
+      <div class="leg-item"><div class="leg-sq" style="background:#1D9E75"></div>Efecto positivo</div>
+      <div class="leg-item"><div class="leg-sq" style="background:#A32D2D"></div>Efecto negativo</div>
+    </div>
+    <div style="position:relative; width:100%; height:380px;">
+      <canvas id="wfChart"></canvas>
+    </div>
+  </div>
+
+  <!-- TABLA RESUMEN -->
+  <div class="table-card">
+    <div class="chart-title">Resumen de efectos</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Efecto</th>
+          <th class="r">Stores</th>
+          <th class="r">% sobre target</th>
+        </tr>
+      </thead>
+      <tbody id="tabla-efectos"></tbody>
+    </table>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer" id="footer-text">
+    Fuente: Snowflake · IS_FUNNEL_GOLD · TG_IS_2026_GOLD
+  </div>
+
+</div><!-- /wrapper -->
+
+<div id="tooltip"></div>
+
+<!-- ══════════════════════════════════════════════════
+     DATOS DEL BRIDGE — reemplazar con valores reales
+     ══════════════════════════════════════════════════ -->
+<script>
+const BRIDGE_DATA = {
+  modalidad:    "QTD",
+  semanas:      ["2026-03-30","2026-04-06","2026-04-13","2026-04-20"],
+  target_total: 6617,
+  real_total:   6314,
+  desvio:       -303,
+  desvio_pct:   -4.6,
+  efectos: [
+    { label: "OB \u2013 Productividad", delta: -781 },
+    { label: "OB \u2013 Headcount",     delta: -755 },
+    { label: "OB \u2013 Maturity",      delta:  840 },
+    { label: "IB \u2013 Productividad", delta: -419 },
+    { label: "IB \u2013 Headcount",     delta:  821 },
+    { label: "IB \u2013 Maturity",      delta:   -8 }
+  ]
+};
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     LÓGICA DE RENDER — no modificar
+     ══════════════════════════════════════════════════ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>
+(function() {
+  const D = BRIDGE_DATA;
+
+  // ── Verificación de cierre ──────────────────────────────────────
+  const sumDelta = D.efectos.reduce((s,e)=>s+e.delta,0);
+  const esperado = D.real_total - D.target_total;
+  if (Math.abs(sumDelta - esperado) > 1) {
+    console.warn('[Bridge] CIERRE INCORRECTO: suma efectos='+sumDelta+' esperado='+esperado);
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────
+  const fmt = n => n.toLocaleString('es');
+  const fmtSign = n => (n >= 0 ? '+' : '') + fmt(n);
+  const fmtPct  = n => (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+  const today = new Date().toLocaleDateString('es', {day:'2-digit',month:'short',year:'numeric'});
+
+  // ── KPI cards ───────────────────────────────────────────────────
+  document.getElementById('badge-modalidad').textContent    = D.modalidad;
+  document.getElementById('meta-semanas').textContent       = 'Semanas: ' + D.semanas.join(' · ');
+  document.getElementById('meta-generado').textContent      = 'Generado: ' + today;
+  document.getElementById('kpi-target').textContent         = fmt(D.target_total);
+  document.getElementById('kpi-real').textContent           = fmt(D.real_total);
+  const kpiDesvio = document.getElementById('kpi-desvio');
+  kpiDesvio.textContent = fmtSign(D.desvio);
+  kpiDesvio.className = 'kpi-value ' + (D.desvio >= 0 ? 'pos' : 'neg');
+  document.getElementById('kpi-desvio-pct').textContent = fmtPct(D.desvio_pct) + ' vs target';
+  document.getElementById('kpi-semanas').textContent       = D.semanas.length;
+  document.getElementById('kpi-modalidad-label').textContent = D.modalidad === 'LW' ? 'Last Week' : 'Quarter to Date';
+
+  // ── Footer ──────────────────────────────────────────────────────
+  document.getElementById('footer-text').innerHTML =
+    'Fuente: Snowflake &middot; IS_FUNNEL_GOLD &middot; TG_IS_2026_GOLD &nbsp;|&nbsp; ' +
+    'Semanas: ' + D.semanas.join(', ') + ' &nbsp;|&nbsp; Modalidad: ' + D.modalidad;
+
+  // ── Tabla de efectos ────────────────────────────────────────────
+  const tbody = document.getElementById('tabla-efectos');
+  D.efectos.forEach(e => {
+    const pct = D.target_total !== 0 ? (e.delta / D.target_total * 100) : 0;
+    const cls = e.delta > 0 ? 'pill-pos' : e.delta < 0 ? 'pill-neg' : 'pill-zer';
+    tbody.innerHTML += `<tr>
+      <td>${e.label}</td>
+      <td class="r"><span class="pill ${cls}">${fmtSign(e.delta)}</span></td>
+      <td class="r">${e.delta === 0 ? '—' : fmtPct(pct)}</td>
+    </tr>`;
+  });
+  // Fila total
+  const totalCls = D.desvio > 0 ? 'pill-pos' : D.desvio < 0 ? 'pill-neg' : 'pill-zer';
+  tbody.innerHTML += `<tr>
+    <td>Desvío total</td>
+    <td class="r"><span class="pill ${totalCls}">${fmtSign(D.desvio)}</span></td>
+    <td class="r">${fmtPct(D.desvio_pct)}</td>
+  </tr>`;
+
+  // ── Waterfall D3 ────────────────────────────────────────────────
+  const bars = [
+    { label: 'Target total',  delta: D.target_total, type: 'base'  },
+    ...D.efectos.map(e => ({
+      label: e.label,
+      delta: e.delta,
+      type:  e.delta > 0 ? 'pos' : e.delta < 0 ? 'neg' : 'zero'
+    })),
+    { label: 'Real total',    delta: D.real_total,   type: 'total' }
+  ];
+
+  // Calcular start / end
+  let cursor = 0;
+  const computed = bars.map(b => {
+    let start, end;
+    if (b.type === 'base')        { start = 0; end = b.delta; cursor = b.delta; }
+    else if (b.type === 'total')  { start = 0; end = b.delta; }
+    else                          { start = cursor; end = cursor + b.delta; cursor += b.delta; }
+    return { ...b, start, end };
+  });
+
+  const COL  = { base:'#185FA5', total:'#185FA5', pos:'#1D9E75', neg:'#A32D2D', zero:'#B4B2A9' };
+  const LITE = { base:'#B5D4F4', total:'#B5D4F4', pos:'#9FE1CB', neg:'#F7C1C1', zero:'#D3D1C7' };
+
+  const canvas = document.getElementById('wfChart');
+  const W = canvas.parentElement.clientWidth || 720;
+  const H = 360;
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  const mL=72, mR=16, mT=36, mB=88;
+  const cW = W - mL - mR;
+  const cH = H - mT - mB;
+  const n  = computed.length;
+  const bW = Math.floor(cW / n * 0.64);
+  const gap = Math.floor(cW / n * 0.36);
+
+  const allV = computed.flatMap(b => [b.start, b.end]);
+  const yMin = Math.min(0, ...allV);
+  const yMax = Math.max(0, ...allV);
+  const pad  = (yMax - yMin) * 0.14;
+  const dMin = yMin - pad * 0.2;
+  const dMax = yMax + pad;
+
+  const yP = v => mT + cH * (1 - (v - dMin) / (dMax - dMin));
+  const xP = i => mL + i * (bW + gap) + gap / 2;
+
+  const tC = '#1A1917';
+  const mC = '#73726C';
+  const gC = 'rgba(0,0,0,0.06)';
+
+  let hoverIdx = -1;
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Grid
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
+    ctx.font = '11px system-ui'; ctx.fillStyle = mC;
+    for (let i = 0; i <= 6; i++) {
+      const v = dMin + (dMax - dMin) * i / 6;
+      const y = yP(v);
+      ctx.strokeStyle = gC; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(mL, y); ctx.lineTo(W - mR, y); ctx.stroke();
+      ctx.fillText(Math.round(v).toLocaleString('es'), mL - 6, y);
+    }
+
+    // Zero line
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = 1; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(mL, yP(0)); ctx.lineTo(W - mR, yP(0)); ctx.stroke();
+
+    // Conectores
+    for (let i = 0; i < n - 1; i++) {
+      const b = computed[i], nb = computed[i + 1];
+      if (b.type === 'base' || b.type === 'total') continue;
+      if (nb.type === 'total') continue;
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 0.8; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(xP(i) + bW, yP(b.end)); ctx.lineTo(xP(i + 1), yP(b.end)); ctx.stroke();
+    }
+    const le = computed[n - 2];
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 0.8; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(xP(n - 2) + bW, yP(le.end)); ctx.lineTo(xP(n - 1), yP(le.end)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Barras
+    computed.forEach((b, i) => {
+      const x   = xP(i);
+      const top = Math.min(yP(b.start), yP(b.end));
+      const bot = Math.max(yP(b.start), yP(b.end));
+      const bh  = Math.max(2, bot - top);
+      const isH = hoverIdx === i;
+      ctx.fillStyle   = isH ? LITE[b.type] : COL[b.type];
+      ctx.beginPath(); ctx.roundRect(x, top, bW, bh, 4); ctx.fill();
+      ctx.strokeStyle = COL[b.type]; ctx.lineWidth = isH ? 2 : 1.5;
+      ctx.beginPath(); ctx.roundRect(x, top, bW, bh, 4); ctx.stroke();
+
+      const isBig = b.type === 'base' || b.type === 'total';
+      ctx.fillStyle = tC; ctx.textAlign = 'center';
+      ctx.font = (isBig ? '600 ' : '') + '11px system-ui';
+      const sign = b.delta > 0 ? '+' : '';
+      const lbl  = isBig ? b.delta.toLocaleString('es') : (b.delta === 0 ? '0' : sign + b.delta.toLocaleString('es'));
+      ctx.fillText(lbl, x + bW / 2, top - 5);
+      if (!isBig && b.delta !== 0) {
+        const pct = D.target_total !== 0 ? (b.delta / D.target_total * 100).toFixed(1) : '0.0';
+        const ps  = b.delta > 0 ? '+' : '';
+        ctx.fillStyle = mC; ctx.font = '10px system-ui';
+        ctx.fillText('(' + ps + pct + '%)', x + bW / 2, top - 17);
+      }
+    });
+
+    // Etiquetas X
+    computed.forEach((b, i) => {
+      ctx.save();
+      ctx.translate(xP(i) + bW / 2, H - mB + 14);
+      ctx.rotate(-Math.PI / 5);
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = tC; ctx.font = '11px system-ui';
+      ctx.fillText(b.label, 0, 0);
+      ctx.restore();
+    });
+
+    // Separador OB / IB
+    const sepX = (xP(3) + bW + xP(4)) / 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.09)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.moveTo(sepX, mT); ctx.lineTo(sepX, H - mB); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '500 11px system-ui'; ctx.fillStyle = mC; ctx.textAlign = 'center';
+    ctx.fillText('OUTBOUND', (xP(1) + xP(3) + bW) / 2, mT - 12);
+    ctx.fillText('INBOUND',  (xP(4) + xP(6) + bW) / 2, mT - 12);
+  }
+
+  draw();
+
+  // Hover / tooltip
+  const tt = document.getElementById('tooltip');
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (W / rect.width);
+    const my = (e.clientY - rect.top)  * (H / rect.height);
+    let found = -1;
+    computed.forEach((b, i) => {
+      const x   = xP(i);
+      const top = Math.min(yP(b.start), yP(b.end));
+      const bot = Math.max(yP(b.start), yP(b.end));
+      if (mx >= x && mx <= x + bW && my >= top - 2 && my <= bot + 2) found = i;
+    });
+    if (found >= 0) {
+      const b = computed[found];
+      const isBig = b.type === 'base' || b.type === 'total';
+      const sign  = b.delta >= 0 ? '+' : '';
+      const pct   = D.target_total !== 0 ? (b.delta / D.target_total * 100).toFixed(1) : '0.0';
+      let html = '<strong>' + b.label + '</strong><br>';
+      if (isBig) {
+        html += 'Stores: <strong>' + b.delta.toLocaleString('es') + '</strong>';
+      } else {
+        html += 'Efecto: <strong>' + sign + b.delta.toLocaleString('es') + ' stores</strong><br>';
+        html += '% sobre target: <strong>' + sign + pct + '%</strong><br>';
+        html += 'Acumulado: <strong>' + b.end.toLocaleString('es') + '</strong>';
+      }
+      tt.innerHTML = html;
+      tt.style.opacity = '1';
+      tt.style.left = Math.min(e.clientX + 14, window.innerWidth - 200) + 'px';
+      tt.style.top  = Math.max(e.clientY - 30, 0) + 'px';
+      hoverIdx = found; draw();
+    } else {
+      tt.style.opacity = '0'; hoverIdx = -1; draw();
+    }
+  });
+  canvas.addEventListener('mouseleave', () => { tt.style.opacity = '0'; hoverIdx = -1; draw(); });
+
+})();
+</script>
+</body>
+</html>
