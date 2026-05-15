@@ -2,6 +2,7 @@ report_id: nuevo_framing_q2
 title: "Nuevo Framing Q2"
 quarter_param: ":quarter"
 default_quarter: "Q2"
+last_updated: "2026-05-06"
 
 axis:
   week_source_query: week_axis
@@ -18,6 +19,17 @@ display:
     number: "#,##0.00"
     percent: "0.00%"
 
+# NOTAS CLAVE DE TIPOS EN ELC_FUNNEL_GOLD:
+#   TYPE = 'TOTAL AVAILABLE' → stock acumulado total (para Total Available Stores)
+#   TYPE = 'TOTAL ACTIVE'    → stock acumulado total (para Total Active Stores)
+#   TYPE = 'AVAILABLE'       → New Available (flujo semanal por canal)
+#   TYPE = 'ACTIVE'          → New Active    (flujo semanal por canal)
+#   TYPE = 'PERFECT STORE'   → conteo de perfect stores (con espacio, no guion bajo)
+#   TYPE = 'HANDOFF_3/7/28'  → handoffs en N días
+#   TYPE = 'LOG_7/28'        → first logins en N días
+#   TYPE = 'ORDER_28'        → first orders en 28 días
+#   TYPE = 'AVG_DIAS_HANDOFF/LOG/ORDER' → promedios de días (usar AVG, no SUM)
+
 business_rules:
   q_filter: "Always filter by Q explicitly"
   target_cut_rule: "For QTD target comparison, use only weeks with actual available"
@@ -28,12 +40,19 @@ business_rules:
   target_hc_old_rule: "HC target senior / HC target total"
   target_macro_rule: "Do not average productivity targets at macro level. Recalculate target stores from productividad_target * dias_trabajados_reales and then derive target productivity as target_stores_macro / dias_trabajados_reales_total"
   target_join_rule: "Always aggregate ELC targets before joining to actuals. Include full target granularity to avoid duplication"
+  total_vs_new_rule: "Total Available/Active usa TYPE='TOTAL AVAILABLE'/'TOTAL ACTIVE'. New Available/Active usa TYPE='AVAILABLE'/'ACTIVE'. Son distintos: stock puntual vs flujo semanal."
+  total_stock_qtd_rule: "Total Available Stores y Total Active Stores son métricas de STOCK PUNTUAL (snapshot al cierre de semana), NO flujos acumulativos. Su QTD = valor de la última semana con actual cargado (no suma de semanas). Ejemplo: si el último actual es abr 27 con valor 154.424, el QTD = 154.424."
+  net_adds_rule: "Net Available Adds = TOTAL AVAILABLE(t) - TOTAL AVAILABLE(t-1) via LAG. Net Active Adds = TOTAL ACTIVE(t) - TOTAL ACTIVE(t-1) via LAG. QTD de Net Adds = TOTAL(última semana con actual) - TOTAL(primera semana del quarter)."
+  funnel_ratio_rule: "Las métricas de % funnel (perfect stores, handoff, login, order) = SUM(TYPE=X) / SUM(TYPE='CREATED'). Usar CREATED como denominador, no AVAILABLE."
+  avg_dias_rule: "Los AVG_DIAS_* se agregan con AVG(CASE WHEN TYPE='AVG_DIAS_X' THEN METRIC END), no SUM. QTD = AVG simple sobre las semanas con dato."
 
 qtd_rules:
   additive: "SUM(non_null_week_values)"
   avg: "AVG(non_null_week_values)"
   weighted_ratio: "SUM(numerator_parts) / NULLIF(SUM(denominator_parts),0)"
   weighted_productivity: "SUM(stores_parts) / NULLIF(SUM(days_parts),0)"
+  funnel_ratio_qtd: "SUM(metric_type across all weeks) / SUM(CREATED across all weeks)"
+  last_value: "Valor de la última semana con actual cargado. Aplica a métricas de stock puntual: Total Available Stores, Total Active Stores."
 
 gap_rule: "QTD actual - QTD target"
 
@@ -51,44 +70,53 @@ sections:
       - label: "Total Available Stores"
         source: main_metrics_top_query
         field: total_available_stores
+        note: "TYPE = TOTAL AVAILABLE. Stock puntual al cierre de semana. QTD = valor de la última semana con actual (no suma)."
+        format: integer
+        qtd_rule: last_value
+
+      - label: "Net Available Adds"
+        source: main_metrics_top_query
+        field: net_available_adds
+        note: "TOTAL AVAILABLE(t) - TOTAL AVAILABLE(t-1) via LAG"
         format: integer
         qtd_rule: additive
-
-      - label: "Net Adds"
-        source: none
-        render_as: pending_definition
-        format: integer
 
       - label: "Total Active Stores"
         source: main_metrics_top_query
         field: total_active_stores
+        note: "TYPE = TOTAL ACTIVE. Stock puntual al cierre de semana. QTD = valor de la última semana con actual (no suma)."
         format: integer
-        qtd_rule: additive
+        qtd_rule: last_value
 
       - label: "% Activation Rate"
         source: main_metrics_top_query
         field: activation_rate_pct
+        note: "new_active / new_available (flujo)"
         format: percent
         qtd_rule: weighted_ratio
 
       - label: "Net Active Adds"
-        source: none
-        render_as: pending_definition
+        source: main_metrics_top_query
+        field: net_active_adds
+        note: "TOTAL ACTIVE(t) - TOTAL ACTIVE(t-1) via LAG"
         format: integer
+        qtd_rule: additive
 
   - id: main_metrics_bottom
-    title: "Main Metrics"
-    range: "D33:U73"
+    title: "Main Metrics (New Stores)"
+    range: "D33:U35"
     rows:
       - label: "New Available Stores"
         source: main_metrics_bottom_query
         field: new_available_stores
+        note: "TYPE = AVAILABLE (flujo semanal, todos los canales)"
         format: integer
         qtd_rule: additive
 
       - label: "New Active Stores"
         source: main_metrics_bottom_query
         field: new_active_stores
+        note: "TYPE = ACTIVE (flujo semanal, todos los canales)"
         format: integer
         qtd_rule: additive
 
@@ -142,9 +170,11 @@ sections:
         gap_against: "Total Hunting Productivity"
 
       - label: "% New Signings Perfect Stores"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: pct_perfect_stores
+        note: "PERFECT STORE / CREATED (TYPE con espacio)"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "Total Hunting Headcount"
         source: hunting_query
@@ -173,49 +203,67 @@ sections:
         gap_against: "% Hunters Old"
 
       - label: "% Handoff done <= 3 days"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: pct_handoff_3d
+        note: "HANDOFF_3 / CREATED"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% Handoff / Signings (Closed cohort) - 7D"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: pct_handoff_7d
+        note: "HANDOFF_7 / CREATED"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_Log_in rate (Closed cohort) - 7D"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: pct_login_7d
+        note: "LOG_7 / CREATED"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "Avg days from Signing to Handoff"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: avg_dias_handoff
+        note: "AVG(METRIC) WHERE TYPE='AVG_DIAS_HANDOFF'"
         format: number
+        qtd_rule: avg
 
       - label: "Avg days from Signing to Log_in"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: avg_dias_log
+        note: "AVG(METRIC) WHERE TYPE='AVG_DIAS_LOG'"
         format: number
+        qtd_rule: avg
 
       - label: "Avg days from Log_in to First_Order"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: avg_dias_order
+        note: "AVG(METRIC) WHERE TYPE='AVG_DIAS_ORDER'"
         format: number
+        qtd_rule: avg
 
       - label: "% Handoff / Signings (Closed cohort) - 28D"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: pct_handoff_28d
+        note: "HANDOFF_28 / CREATED"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_Log_in rate (Closed cohort) - 28D"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: pct_login_28d
+        note: "LOG_28 / CREATED"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_order rate (Closed cohort)"
-        source: none
-        render_as: missing_source
+        source: hunting_query
+        field: pct_first_order
+        note: "ORDER_28 / CREATED"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
   - id: inside_sales_outbound
     title: "Inside Sales Outbound"
@@ -261,9 +309,11 @@ sections:
         gap_against: "Total Inside Sales Outbound Productivity"
 
       - label: "% New Signings Perfect Stores"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: pct_perfect_stores
+        note: "PERFECT STORE / CREATED"
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "Total Inside Sales Outbound Headcount"
         source: inside_sales_outbound_query
@@ -292,49 +342,58 @@ sections:
         gap_against: "% Agents Old"
 
       - label: "% Handoff done <= 3 days"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: pct_handoff_3d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% Handoff / Signings (Closed cohort) - 7D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: pct_handoff_7d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_Log_in rate (Closed cohort) - 7D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: pct_login_7d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "Avg days from Signing to Handoff"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: avg_dias_handoff
         format: number
+        qtd_rule: avg
 
       - label: "Avg days from Signing to Log_in"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: avg_dias_log
         format: number
+        qtd_rule: avg
 
       - label: "Avg days from Log_in to First_Order"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: avg_dias_order
         format: number
+        qtd_rule: avg
 
       - label: "% Handoff / Signings (Closed cohort) - 28D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: pct_handoff_28d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_Log_in rate (Closed cohort) - 28D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: pct_login_28d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_order rate (Closed cohort)"
-        source: none
-        render_as: missing_source
+        source: inside_sales_outbound_query
+        field: pct_first_order
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
   - id: inside_sales_inbound
     title: "Inside Sales Inbound"
@@ -385,9 +444,10 @@ sections:
         gap_against: "Total Inside Sales Inbound Productivity"
 
       - label: "% New Signings Perfect Stores"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: pct_perfect_stores
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "Total Inside Sales Inbound Headcount"
         source: inside_sales_inbound_query
@@ -416,49 +476,58 @@ sections:
         gap_against: "% Agents Old"
 
       - label: "% Handoff done <= 3 days"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: pct_handoff_3d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% Handoff / Signings (Closed cohort) - 7D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: pct_handoff_7d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_Log_in rate (Closed cohort) - 7D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: pct_login_7d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "Avg days from Signing to Handoff"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: avg_dias_handoff
         format: number
+        qtd_rule: avg
 
       - label: "Avg days from Signing to Log_in"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: avg_dias_log
         format: number
+        qtd_rule: avg
 
       - label: "Avg days from Log_in to First_Order"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: avg_dias_order
         format: number
+        qtd_rule: avg
 
       - label: "% Handoff / Signings (Closed cohort) - 28D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: pct_handoff_28d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_Log_in rate (Closed cohort) - 28D"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: pct_login_28d
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
       - label: "% First_order rate (Closed cohort)"
-        source: none
-        render_as: missing_source
+        source: inside_sales_inbound_query
+        field: pct_first_order
         format: percent
+        qtd_rule: funnel_ratio_qtd
 
   - id: self_onboarding
     title: "Self-Onboarding"
@@ -536,6 +605,250 @@ sections:
         format: percent
 
       - label: "% First_order rate (Closed cohort)"
-        source: none
+        source: brand_expansion_query
+        field: none
         render_as: missing_source
         format: percent
+
+# =========================================================
+# EARLY CHURN — 3 secciones al final del informe
+# Fuentes: EARLY_CHURN_SILVER + TG_EARLY_CHURN_CHANNEL
+# Queries: early-churn-agente/references/track_early_churn/queries.sql
+# =========================================================
+
+  - id: early_churn_m1
+    title: "Early Churn M1"
+    is_churn_section: true
+    anomaly_threshold_pp: 40
+    note: "GAP invertido: positivo = sobre target (malo, rojo). QTD ponderado por TOTAL_STORE."
+    rows:
+      - label: "% Churn Hunting"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M1, canal: HUNTING}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Hunting"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M1, canal: HUNTING}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Hunting"
+      - label: "% Churn Inside Sales"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M1, canal: IS}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Inside Sales"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M1, canal: IS}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Inside Sales"
+      - label: "% Churn Self-Onboarding"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M1, canal: SOB}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Self-Onboarding"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M1, canal: SOB}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Self-Onboarding"
+      - label: "% Churn Brand Expansion"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M1, canal: BE}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Brand Expansion"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M1, canal: BE}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Brand Expansion"
+      - label: "% Churn Total"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M1, canal: TOTAL}
+        format: percent
+        qtd_rule: weighted_ratio
+        is_churn_total: true
+      - label: "Target % Churn Total"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M1, canal: TOTAL}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Total"
+        is_churn_total: true
+
+  - id: early_churn_m2
+    title: "Early Churn M2"
+    is_churn_section: true
+    anomaly_threshold_pp: 40
+    note: "GAP invertido: positivo = sobre target (malo, rojo). QTD ponderado por TOTAL_STORE."
+    rows:
+      - label: "% Churn Hunting"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M2, canal: HUNTING}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Hunting"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M2, canal: HUNTING}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Hunting"
+      - label: "% Churn Inside Sales"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M2, canal: IS}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Inside Sales"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M2, canal: IS}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Inside Sales"
+      - label: "% Churn Self-Onboarding"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M2, canal: SOB}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Self-Onboarding"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M2, canal: SOB}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Self-Onboarding"
+      - label: "% Churn Brand Expansion"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M2, canal: BE}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Brand Expansion"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M2, canal: BE}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Brand Expansion"
+      - label: "% Churn Total"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M2, canal: TOTAL}
+        format: percent
+        qtd_rule: weighted_ratio
+        is_churn_total: true
+      - label: "Target % Churn Total"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M2, canal: TOTAL}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Total"
+        is_churn_total: true
+
+  - id: early_churn_m3
+    title: "Early Churn M3"
+    is_churn_section: true
+    anomaly_threshold_pp: 40
+    note: "GAP invertido: positivo = sobre target (malo, rojo). QTD ponderado por TOTAL_STORE."
+    rows:
+      - label: "% Churn Hunting"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M3, canal: HUNTING}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Hunting"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M3, canal: HUNTING}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Hunting"
+      - label: "% Churn Inside Sales"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M3, canal: IS}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Inside Sales"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M3, canal: IS}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Inside Sales"
+      - label: "% Churn Self-Onboarding"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M3, canal: SOB}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Self-Onboarding"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M3, canal: SOB}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Self-Onboarding"
+      - label: "% Churn Brand Expansion"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M3, canal: BE}
+        format: percent
+        qtd_rule: weighted_ratio
+      - label: "Target % Churn Brand Expansion"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M3, canal: BE}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Brand Expansion"
+      - label: "% Churn Total"
+        source: early_churn_query
+        field: churn_pct
+        filter: {age: M3, canal: TOTAL}
+        format: percent
+        qtd_rule: weighted_ratio
+        is_churn_total: true
+      - label: "Target % Churn Total"
+        source: early_churn_query
+        field: target_pct
+        filter: {age: M3, canal: TOTAL}
+        format: percent
+        qtd_rule: weighted_ratio
+        invert_gap: true
+        gap_against: "% Churn Total"
+        is_churn_total: true
